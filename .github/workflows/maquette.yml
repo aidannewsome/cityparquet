@@ -1,0 +1,67 @@
+# Maquette's builds of this fork. A maquette-* tag builds the cityparquet CLI for the systems Maquette runs it on and
+# attaches them to a GitHub release of that tag, for Maquette's pipeline to install, as upstream's Publish crates does
+# for a v tag: the same build, archive and checksums. Nothing goes to crates.io. Once upstream releases the fixes this
+# fork carries, Maquette installs upstream's release instead.
+name: Maquette release
+
+on:
+  push:
+    tags: ["maquette-*"]
+
+permissions:
+  contents: write  # create the release and upload its files
+
+jobs:
+  binaries:
+    name: CLI ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-24.04 }  # the pipeline's machines
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+          - { target: aarch64-apple-darwin, os: macos-latest }  # a Mac, for the pipeline's tests
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: false
+      - name: Add the target
+        working-directory: lib/cityparquet-rs
+        run: rustup target add ${{ matrix.target }}
+      - name: Build the CLI
+        working-directory: lib/cityparquet-rs
+        run: cargo build --release --locked -p cityparquet-cli --target ${{ matrix.target }}
+      - name: Check the binary runs
+        run: lib/cityparquet-rs/target/${{ matrix.target }}/release/cityparquet --version
+      - name: Package
+        run: |
+          set -euo pipefail
+          stage="cityparquet-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p "dist/${stage}"
+          cp "lib/cityparquet-rs/target/${{ matrix.target }}/release/cityparquet" LICENSE-MIT LICENSE-APACHE README.md "dist/${stage}/"
+          tar -C dist -czf "dist/${stage}.tar.gz" "${stage}"
+          rm -rf "dist/${stage}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: dist
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          gh release create "${GITHUB_REF_NAME}" dist/* --title "${GITHUB_REF_NAME}" --notes "The cityparquet CLI as Maquette runs it, built from ${GITHUB_SHA}." --prerelease
