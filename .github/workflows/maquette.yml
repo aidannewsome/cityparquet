@@ -33,7 +33,7 @@ jobs:
         working-directory: lib/cityparquet-rs
         run: cargo build --release --locked -p cityparquet-cli --target ${{ matrix.target }}
       - name: Check the binary runs
-        run: lib/cityparquet-rs/target/${{ matrix.target }}/release/cityparquet --version
+        run: lib/cityparquet-rs/target/${{ matrix.target }}/release/cityparquet --help
       - name: Package
         run: |
           set -euo pipefail
